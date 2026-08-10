@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+: "${FABRICCTL_RESET_TEST_LOG:?FABRICCTL_RESET_TEST_LOG is required}"
+printf 'kubectl' >>"$FABRICCTL_RESET_TEST_LOG"
+printf ' %q' "$@" >>"$FABRICCTL_RESET_TEST_LOG"
+printf '\n' >>"$FABRICCTL_RESET_TEST_LOG"
+
+arguments=" $* "
+case "$arguments" in
+  *' auth can-i '*)
+    exit 0
+    ;;
+  *' get namespace '*)
+    printf '{"kind":"Namespace"}\n'
+    ;;
+  *' get job -o json '*)
+    printf '%s\n' '{"items":[{"metadata":{"name":"chaincode-supplychain-org1-deadbeef00"}},{"metadata":{"name":"peer-channel-channel1-org1-deadbeef00"}},{"metadata":{"name":"channel-channel1-deadbeef00"}},{"metadata":{"name":"unrelated-job"}}]}'
+    ;;
+  *' get configmap -o json '*)
+    printf '%s\n' '{"items":[{"metadata":{"name":"chaincode-supplychain-org1-deadbeef00"}},{"metadata":{"name":"peer-channel-channel1-org1-deadbeef00"}},{"metadata":{"name":"channel-channel1-deadbeef00"}},{"metadata":{"name":"unrelated-config"}}]}'
+    ;;
+  *' delete '*)
+    exit 0
+    ;;
+  *)
+    printf 'Unexpected kubectl test invocation: %s\n' "$*" >&2
+    exit 1
+    ;;
+esac

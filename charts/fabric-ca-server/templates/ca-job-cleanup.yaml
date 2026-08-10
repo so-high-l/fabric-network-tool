@@ -1,0 +1,64 @@
+{{- if .Values.server.cleanup.enabled }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "fabric-ca-server.name" . }}-cleanup
+  labels:
+    app.kubernetes.io/name: fabric-ca-server-job-cleanup
+    app.kubernetes.io/component: ca-server-job-cleanup
+    app.kubernetes.io/part-of: {{ include "fabric-ca-server.fullname" . }}
+    app.kubernetes.io/namespace: {{ .Release.Namespace }}
+    app.kubernetes.io/managed-by: helm
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook-weight: "0"
+    helm.sh/hook: "pre-delete"
+    helm.sh/hook-delete-policy: "hook-succeeded"
+spec:
+  backoffLimit: 3
+  completions: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fabric-ca-server-job-cleanup
+        app.kubernetes.io/component: ca-server-job-cleanup
+        app.kubernetes.io/part-of: {{ include "fabric-ca-server.fullname" . }}
+        app.kubernetes.io/namespace: {{ .Release.Namespace }}
+        app.kubernetes.io/managed-by: helm
+    spec:
+      serviceAccountName: {{ .Values.global.serviceAccountName }}
+      restartPolicy: "Never"
+      {{- if .Values.podSecurityContext.enabled }}
+      securityContext:
+{{ omit .Values.podSecurityContext "enabled" | toYaml | indent 8 }}
+      {{- end }}
+      containers:
+        - name: delete-secrets
+          image: {{ .Values.image.alpineUtils }}
+          resources:
+{{ toYaml .Values.resources.cleanup | indent 12 }}
+          {{- if .Values.containerSecurityContext.enabled }}
+          securityContext:
+{{ omit .Values.containerSecurityContext "enabled" | toYaml | indent 12 }}
+          {{- else }}
+          securityContext:
+            runAsUser: 0
+          {{- end }}
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c"]
+          args:
+            - |-
+{{- if .Values.server.removeCertsOnDelete }}
+
+              function deleteSecret {
+                key=$1
+                kubectl get secret ${key} --namespace {{ .Release.Namespace }} -o json > /dev/null 2>&1
+                if [ $? -eq 0 ]; then
+                  kubectl delete secret ${key} --namespace {{ .Release.Namespace }}
+                fi
+              }
+              deleteSecret {{ include "fabric-ca-server.name" . }}-certs
+{{- end}}
+{{- end }}
+# Modified by Fabric Network Tool for namespace-scoped, restricted Fabric deployment.

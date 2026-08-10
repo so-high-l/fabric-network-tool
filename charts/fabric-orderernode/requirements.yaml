@@ -1,0 +1,3 @@
+# Modified by Fabric Network Tool: certificate and storage resources are
+# externally managed by fabricctl, so no subcharts are required.
+dependencies: []

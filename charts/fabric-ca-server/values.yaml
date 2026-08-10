@@ -1,0 +1,167 @@
+##############################################################################################
+#  Copyright Accenture. All Rights Reserved.
+#
+#  SPDX-License-Identifier: Apache-2.0
+##############################################################################################
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+---
+# The following are for overriding global values
+global:
+  #Provide the service account name which will be created.
+  serviceAccountName: vault-auth
+  cluster:
+    provider: aws  # choose from: minikube | aws | azure | gcp
+    cloudNativeServices: false # only 'false' is implemented
+    #Provide the kubernetes host url
+    #Eg. kubernetesUrl: https://10.3.8.5:8443
+    kubernetesUrl:
+  vault:
+    #Provide the type of vault
+    #Eg. type: hashicorp
+    type: hashicorp
+    #Provide the vaultrole for an organization
+    #Eg. vaultrole: org1-vault-role
+    role: vault-role
+    #Provide the network type
+    network: fabric
+    #Provide the vault server address
+    #Eg. vaultaddress: http://Vault-884963190.eu-west-1.elb.amazonaws.com
+    address:
+    #Provide the kubernetes auth backed configured in vault for an organization
+    #Eg. authpath: supplychain
+    authPath: supplychain
+    #Provide the secret engine.
+    secretEngine: secretsv2
+    #Provide the vault path where the secrets will be stored
+    secretPrefix: "data/supplychain"
+    #Enable or disable TLS for Vault communication
+    #Eg. tls: true
+    tls: false
+
+  proxy:
+    #This will be the proxy/ingress provider. Can have values "haproxy" or "none"
+    #Eg. provider: "haproxy"
+    provider: haproxy
+    #This field specifies the external url for the organization
+    #Eg. externalUrlSuffix: test.blockchaincloudpoc.com
+    externalUrlSuffix: test.blockchaincloudpoc.com
+
+storage:
+  #Provide the size for CA
+  #Eg. size: 512Mi
+  size: 512Mi
+  # Use an existing PVC instead of a StatefulSet volumeClaimTemplate.
+  # Required for namespace-scoped clusters with static PVs.
+  existingClaim: ""
+  # NOTE: when you set this to Retain, the volume WILL persist after the chart is delete and you need to manually delete it
+  reclaimPolicy: "Delete" # choose from: Delete | Retain
+  volumeBindingMode: Immediate # choose from: Immediate | WaitForFirstConsumer
+  allowedTopologies:
+    enabled: false
+
+image:
+  #Provide the valid image name and version to read certificates from vault server
+  #Eg.alpineutils: ghcr.io/hyperledger/bevel-alpine:latest
+  alpineUtils: ghcr.io/hyperledger/bevel-alpine:latest
+  #Provide the valid image name and version for fabric ca
+  #Eg. ca: ghcr.io/hyperledger/bevel-fabric-ca:latest
+  ca: ghcr.io/hyperledger/bevel-fabric-ca:latest
+  #Provide the secret to use if private repository
+  #Eg. pullSecret: regcred
+  pullSecret:
+
+server:
+  # Service name. Defaults to the historical Bevel name `ca`.
+  serviceName: ca
+  # OpenSSL config ConfigMap name. Use a release-unique value when several CAs
+  # run in one namespace.
+  opensslConfigMapName: openssl-config-file
+  # Flag to ensure the certificates secrets are removed on helm uninstall
+  removeCertsOnDelete: true
+  # Render the pre-delete cleanup hook. Disable this when CA material is
+  # externally managed and must survive Helm release removal.
+  cleanup:
+    enabled: true
+  #Provide the value for tls setting for CA server
+  #Eg. tlsStatus: true
+  tlsStatus: true
+  # Enable Fabric CA debug logging. Production overlays should set this false.
+  debug: true
+  #Provide the admin username for CA server
+  #Eg. adminUsername: admin
+  adminUsername: admin
+  #Provide the admin password for CA server
+  adminPassword: adminpw
+  # Optional Secret-backed bootstrap identity. When name is set, the CA server
+  # reads the registrar username/password from this Secret instead of embedding
+  # them in Helm values and the rendered StatefulSet command.
+  bootstrapSecret:
+    name: ""
+    usernameKey: username
+    passwordKey: password
+  # Optional pre-created TLS Secret containing tls.crt and tls.key. The same
+  # keypair is used as the Fabric CA signing identity and HTTPS server identity.
+  # Setting this skips the package-installing certificate init container.
+  certificateSecret: ""
+  #Provide the subject of the services ca organization's
+  #Eg. subject: "/C=GB/ST=London/L=London/O=Carrier/CN=carrier-net"
+  subject: "/C=GB/ST=London/L=London/O=Orderer"
+  # Provide the path for Fabric CA Server Config
+  # Eg. configPath: conf/ca-config-default.yaml
+  configPath:
+  #Provide tcp node port to be exposed for ca server
+  #Eg. nodePort: 30007
+  nodePort:
+  #Provide tcp cluster IP port to be exposed for ca server
+  #Eg. clusterIpPort: 7054
+  clusterIpPort: 7054
+
+# Provide additional labels in array format
+labels:
+  #Eg. service:
+  # - label1: value1
+  # - label2: value2
+  service: []
+  pvc: []
+  deployment: []
+
+podSecurityContext:
+  enabled: false
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  enabled: false
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+resources:
+  init:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+  ca:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+  cleanup:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+# Modified by Fabric Network Tool for namespace-scoped, restricted Fabric deployment.

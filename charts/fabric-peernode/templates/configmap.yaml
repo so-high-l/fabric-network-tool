@@ -1,0 +1,133 @@
+##############################################################################################
+#  Copyright Accenture. All Rights Reserved.
+#
+#  SPDX-License-Identifier: Apache-2.0
+##############################################################################################
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Release.Name }}-config
+    app.kubernetes.io/component: fabric
+    app.kubernetes.io/part-of: {{ include "fabric-peernode.fullname" . }}
+    app.kubernetes.io/namespace: {{ .Release.Namespace }}
+    app.kubernetes.io/release: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+data:
+  CORE_VM_ENDPOINT: "{{ .Values.peer.vmEndpoint }}"
+  CORE_PEER_ID: {{ .Release.Name }}.{{ .Release.Namespace }}
+  FABRIC_LOGGING_SPEC: "grpc=debug:{{ .Values.peer.logLevel }}"
+  CORE_LEDGER_STATE_STATEDATABASE: CouchDB
+  CORE_LEDGER_STATE_COUCHDBCONFIG_COUCHDBADDRESS: localhost:5984
+  CORE_LEDGER_STATE_COUCHDBCONFIG_USERNAME: "{{ .Values.peer.couchdb.username }}"
+  CORE_PEER_ADDRESS: {{ .Release.Name }}.{{ .Release.Namespace }}:{{ .Values.peer.ports.grpc.clusterIpPort }}
+  {{- if .Values.peer.gossipPeerAddress }}
+  CORE_PEER_GOSSIP_BOOTSTRAP: {{ .Values.peer.gossipPeerAddress }}
+  {{- else }}
+  CORE_PEER_GOSSIP_BOOTSTRAP: {{ .Release.Name }}.{{ .Release.Namespace }}:{{ .Values.peer.ports.grpc.clusterIpPort }}
+  {{- end }}
+  {{- if .Values.peer.gossipExternalEndpoint }}
+  CORE_PEER_GOSSIP_EXTERNALENDPOINT: {{ .Values.peer.gossipExternalEndpoint }}
+  {{- else if eq .Values.global.proxy.provider "none" }}
+  CORE_PEER_GOSSIP_EXTERNALENDPOINT: {{ .Release.Name }}.{{ .Release.Namespace }}:{{ .Values.peer.ports.grpc.clusterIpPort }}
+  {{- else }}
+  CORE_PEER_GOSSIP_EXTERNALENDPOINT: {{ .Release.Name }}.{{ .Release.Namespace }}.{{ .Values.global.proxy.externalUrlSuffix }}:{{ .Values.global.proxy.port }}
+  {{- end }}
+  CORE_PEER_LOCALMSPID: {{ .Values.peer.localMspId }}
+  CORE_PEER_TLS_ENABLED: "{{ .Values.peer.tlsStatus }}"
+  CORE_PEER_TLS_CERT_FILE: /etc/hyperledger/fabric/crypto/tls/server.crt
+  CORE_PEER_TLS_KEY_FILE: /etc/hyperledger/fabric/crypto/tls/server.key
+  CORE_PEER_TLS_ROOTCERT_FILE: /etc/hyperledger/fabric/crypto/msp/tlscacerts/tlsca.crt
+  CORE_PEER_GOSSIP_USELEADERELECTION: "true"
+  CORE_PEER_GOSSIP_ORGLEADER: "false"
+  CORE_PEER_PROFILE_ENABLED: "true"
+  CORE_PEER_ADDRESSAUTODETECT: "true"
+  CORE_PEER_NETWORKID: {{ .Release.Name }}.{{ .Release.Namespace }}
+  CORE_PEER_MSPCONFIGPATH: /etc/hyperledger/fabric/crypto/msp
+  GODEBUG: "netdns=go"
+  CORE_PEER_GOSSIP_SKIPHANDSHAKE: "true"
+  CORE_CHAINCODE_BUILDER: "{{ .Values.peer.builder }}:{{ .Values.global.version }}"
+  CORE_OPERATIONS_LISTENADDRESS: 0.0.0.0:9443
+  CORE_OPERATIONS_TLS_ENABLED: "{{ .Values.peer.operationsTLS }}"
+  {{- if .Values.peer.operationsTLS }}
+  CORE_OPERATIONS_TLS_CERT_FILE: /etc/hyperledger/fabric/crypto/tls/server.crt
+  CORE_OPERATIONS_TLS_KEY_FILE: /etc/hyperledger/fabric/crypto/tls/server.key
+  CORE_OPERATIONS_TLS_CLIENTAUTHREQUIRED: "false"
+  {{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-msp-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Release.Name }}-msp-config
+    app.kubernetes.io/component: fabric
+    app.kubernetes.io/part-of: {{ include "fabric-peernode.fullname" . }}
+    app.kubernetes.io/namespace: {{ .Release.Namespace }}
+    app.kubernetes.io/release: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+data:
+  mspConfig: |-
+
+    {{- if (.Values.peer.mspConfig.organizationalUnitIdentifiers) }}
+      OrganizationalUnitIdentifiers:
+      {{- range .Values.peer.mspConfig.organizationalUnitIdentifiers }}
+        - Certificate: cacerts/ca.crt
+          OrganizationalUnitIdentifier: {{ . }}
+      {{- end }}
+    {{- end }}
+      NodeOUs:
+        Enable: true
+        ClientOUIdentifier:
+          Certificate: cacerts/ca.crt
+          OrganizationalUnitIdentifier: {{ .Values.peer.mspConfig.nodeOUs.clientOUIdentifier }}
+        PeerOUIdentifier:
+          Certificate: cacerts/ca.crt
+          OrganizationalUnitIdentifier: {{ .Values.peer.mspConfig.nodeOUs.peerOUIdentifier }}
+        AdminOUIdentifier:
+          Certificate: cacerts/ca.crt
+          OrganizationalUnitIdentifier: {{ .Values.peer.mspConfig.nodeOUs.adminOUIdentifier }}
+        OrdererOUIdentifier:
+          Certificate: cacerts/ca.crt
+          OrganizationalUnitIdentifier: {{ .Values.peer.mspConfig.nodeOUs.ordererOUIdentifier }}
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name:  {{ .Release.Name }}-builders-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: builders-config
+    app.kubernetes.io/component: fabric
+    app.kubernetes.io/part-of: {{ include "fabric-peernode.fullname" . }}
+    app.kubernetes.io/namespace: {{ .Release.Namespace }}
+    app.kubernetes.io/release: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: helm
+data:
+  core.yaml: {{ tpl (.Files.Get "conf/default_core.yaml") . | nindent 8 | quote }}
+
+{{- $orderercrt := .Files.Get "files/orderer.crt" }}
+{{ if $orderercrt }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-orderer-tls-cacert
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: orderer-tls-cacert
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/part-of: {{ include "fabric-peernode.fullname" . }}
+    app.kubernetes.io/namespace: {{ .Release.Namespace }}
+    app.kubernetes.io/release: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: helm
+data:
+  cacert: |-
+    {{ .Files.Get "files/orderer.crt" | nindent 8 }}
+{{- end }}
+# Modified by Fabric Network Tool for namespace-scoped, restricted Fabric deployment.

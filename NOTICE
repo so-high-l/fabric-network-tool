@@ -1,0 +1,12 @@
+Fabric Network Tool
+
+This distribution includes modified portions of the Hyperledger Bevel Fabric
+Helm charts under charts/, based on upstream commit
+bd7a023fc65e0f642cb3b815aaa402529a4e7295. Hyperledger Bevel is licensed under
+the Apache License, Version 2.0 and is available from
+https://github.com/hyperledger/bevel.
+
+The vendored chart files retain their original copyright and SPDX notices.
+They were modified for namespace-scoped deployment, direct Kubernetes Secret
+and PVC projection, restricted workload security contexts, and Fabric channel
+participation/CCaaS operation by this tool.

@@ -1,0 +1,125 @@
+##############################################################################################
+#  Copyright Accenture. All Rights Reserved.
+#
+#  SPDX-License-Identifier: Apache-2.0
+##############################################################################################
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+  {{- if or .Values.global.proxy (and .Values.peer.loadBalancerType (eq .Values.peer.loadBalancerType "Internal")) }}
+  {{- if and .Values.peer.loadBalancerType (eq .Values.peer.loadBalancerType "Internal") }}
+    cloud.google.com/load-balancer-type: "Internal"
+  {{- end }}
+  {{- end }}
+  labels:
+    run: {{ .Release.Name }}
+    app.kubernetes.io/name: {{ .Release.Name }}
+    app.kubernetes.io/component: fabric
+    app.kubernetes.io/part-of: {{ include "fabric-peernode.fullname" . }}
+    app.kubernetes.io/namespace: {{ .Release.Namespace }}
+    app.kubernetes.io/release: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    {{- include "labels.service" . | nindent 4 }}
+spec:
+  type: {{ .Values.peer.serviceType }}
+  selector:
+    app: {{ .Release.Name }}
+  ports:
+  - name: grpc
+    protocol: TCP
+    targetPort: 7051
+    port: {{ .Values.peer.ports.grpc.clusterIpPort }}
+    {{- if .Values.peer.ports.grpc.nodePort }}
+    nodePort: {{ .Values.peer.ports.grpc.nodePort }}
+    {{- end }}
+  - name: events
+    protocol: TCP
+    targetPort: 7053
+    port: {{ .Values.peer.ports.events.clusterIpPort }}
+    {{- if .Values.peer.ports.events.nodePort }}
+    nodePort: {{ .Values.peer.ports.events.nodePort }}
+    {{- end }}
+  {{- if .Values.peer.ports.couchdb.expose }}
+  - protocol: TCP
+    name: couchdb
+    targetPort: 5984
+    port: {{ .Values.peer.ports.couchdb.clusterIpPort }}
+    {{- if .Values.peer.ports.couchdb.nodePort }}
+    nodePort: {{ .Values.peer.ports.couchdb.nodePort }}
+    {{- end }}
+  {{- end }}
+  {{- if .Values.grpcWeb.enabled }}
+  - name: grpc-web
+    protocol: TCP
+    targetPort: 7443
+    port: 7443
+  {{- end }}
+  - name: operations
+    protocol: TCP
+    targetPort: 9443
+    port: {{ .Values.peer.ports.metrics.clusterIpPort }}
+  {{- if (eq .Values.peer.serviceType "ClusterIP") }}
+  clusterIP: None
+  {{- end }}
+  {{- if .Values.peer.loadBalancerIP }}
+  loadBalancerIP: {{ .Values.peer.loadBalancerIP }}
+  {{- end }}
+
+{{- if eq .Values.global.proxy.provider "haproxy" }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}
+  namespace:  {{ .Release.Namespace }}
+  annotations:
+    ingress.kubernetes.io/ssl-passthrough: "true"
+spec:
+  ingressClassName: "haproxy"
+  rules:
+  - host: {{ .Release.Name }}.{{ .Release.Namespace }}.{{ .Values.global.proxy.externalUrlSuffix }}
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: {{ .Release.Name }}
+            port:
+              number: {{ .Values.peer.ports.grpc.clusterIpPort }}
+  {{- if .Values.grpcWeb.enabled }}
+  - host: {{ .Release.Name }}-proxy.{{ .Release.Namespace }}.{{ .Values.global.proxy.externalUrlSuffix }}
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: {{ .Release.Name }}
+            port:
+              number: 7443
+  {{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}-ops
+  namespace:  {{ .Release.Namespace }}
+spec:
+  ingressClassName: "haproxy"
+  rules:
+  - host: {{ .Release.Name }}-ops.{{ .Release.Namespace }}.{{ .Values.global.proxy.externalUrlSuffix }}
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: {{ .Release.Name }}
+            port:
+              number: 9443
+{{- end }}
+# Modified by Fabric Network Tool for namespace-scoped, restricted Fabric deployment.

@@ -1,0 +1,3 @@
+# Modified by Fabric Network Tool: optional Bevel subcharts are intentionally
+# removed so this hardened chart is self-contained.
+dependencies: []

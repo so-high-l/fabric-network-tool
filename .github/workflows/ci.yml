@@ -1,0 +1,53 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install pinned yq and Helm
+        shell: bash
+        env:
+          YQ_VERSION: v4.53.2
+          YQ_SHA256: d56bf5c6819e8e696340c312bd70f849dc1678a7cda9c2ad63eebd906371d56b
+          HELM_VERSION: v4.1.4
+          HELM_SHA256: 70b2c30a19da4db264dfd68c8a3664e05093a361cefd89572ffb36f8abfa3d09
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin" "$RUNNER_TEMP/helm"
+          curl --fail --show-error --silent --location \
+            "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64" \
+            --output "$RUNNER_TEMP/bin/yq"
+          printf '%s  %s\n' "$YQ_SHA256" "$RUNNER_TEMP/bin/yq" | sha256sum --check
+          chmod 0755 "$RUNNER_TEMP/bin/yq"
+          curl --fail --show-error --silent --location \
+            "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" \
+            --output "$RUNNER_TEMP/helm/helm.tar.gz"
+          printf '%s  %s\n' "$HELM_SHA256" "$RUNNER_TEMP/helm/helm.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/helm/helm.tar.gz" -C "$RUNNER_TEMP/helm"
+          install -m 0755 "$RUNNER_TEMP/helm/linux-amd64/helm" "$RUNNER_TEMP/bin/helm"
+          printf '%s\n' "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends shellcheck
+
+      - name: Run security and regression checks
+        run: ./tests/security-check.sh

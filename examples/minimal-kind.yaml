@@ -1,0 +1,72 @@
+apiVersion: fabric.network.tools/v1alpha1
+kind: FabricNetwork
+metadata:
+  name: minimal-kind
+spec:
+  environment: development
+
+  cluster:
+    context: kind-fabric-tool-check
+    namespace: fabric-local
+    serviceAccount: fabric-deployer
+    impersonateServiceAccount: true
+
+  network:
+    domain: fabric.local
+  fabric:
+    version: 2.5.4
+  topology:
+    orderers: 3
+    peerOrganizations: 1
+    peersPerOrganization: 1
+  channel:
+    name: channel1
+  chaincode:
+    name: supplychain
+    version: "1"
+    sequence: 1
+    initRequired: false
+    tls: true
+
+  dns:
+    clusterDomain: cluster.local
+    external:
+      enabled: false
+
+  storage:
+    mode: existingClaims
+
+  secrets:
+    provider: kubernetes
+    enrollment: fabric-ca
+    caBootstrapMode: generate
+    generatedCaValidityDays: 3650
+
+  identities:
+    registrationSecret: fabric-ca-enrollment-secrets
+    registrationSecretMode: generate
+    renewalPolicy: preserve
+
+  databases:
+    couchdbCredentialsMode: generate
+
+  images:
+    fabricCA: hyperledger/fabric-ca:1.5.15@sha256:1b64dc702bd400e14c8f452dedc0359b7dc06679b751b08937eb2bf2865fed40
+    fabricOrderer: hyperledger/fabric-orderer:2.5.4@sha256:1a7144705b435062f4be2886de98d0408165cf51326ec721c3f58b40bf8bf139
+    fabricPeer: hyperledger/fabric-peer:2.5.4@sha256:c2e735a3cb8250c47ed3589294b3f0c078004ec001b949710f334736651e106d
+    couchDB: couchdb:3.3.2@sha256:413645f2a2847264be532d7aa200637e1aa5d37b414996fe69c98a9e521724f8
+    fabricTools: hyperledger/fabric-tools:2.5.4@sha256:b3aea8173802186244663334b4196c415cb267d77ea8c617fdd30652c5a732c4
+    kubectl: registry.k8s.io/kubectl:v1.35.0@sha256:0bb95b2a450875fc8ceaea2f9987a99fe27c228846e2e00b93b65ebb0d59034e
+    chaincode: supplychain-ccaas:kind-arm64@sha256:46659da28466b6158b0ecff9facb6f5ce927d8ffed76b0948a2a917cc77b80ba
+    pullSecret: ""
+
+  security:
+    operationsTLS: true
+    fabricCaDebug: true
+
+  logging:
+    orderer: info
+    peer: info
+
+  execution:
+    outputDirectory: ./build/minimal-kind

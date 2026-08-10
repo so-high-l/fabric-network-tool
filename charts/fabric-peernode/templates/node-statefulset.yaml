@@ -1,0 +1,561 @@
+##############################################################################################
+#  Copyright Accenture. All Rights Reserved.
+#
+#  SPDX-License-Identifier: Apache-2.0
+##############################################################################################
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ template "fabric-peernode.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Release.Name }}
+    app.kubernetes.io/name: {{ .Release.Name }}
+    app.kubernetes.io/component: fabric
+    app.kubernetes.io/part-of: {{ template "fabric-peernode.fullname" . }}
+    app.kubernetes.io/namespace: {{ .Release.Namespace }}
+    app.kubernetes.io/release: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: helm
+    {{- include "labels.deployment" . | nindent 4 }}
+spec:
+  updateStrategy:
+    type: RollingUpdate
+  serviceName: {{ .Release.Name }}
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}
+      app.kubernetes.io/name: {{ .Release.Name }}
+      app.kubernetes.io/component: fabric
+      app.kubernetes.io/part-of: {{ template "fabric-peernode.fullname" . }}
+      app.kubernetes.io/namespace: {{ .Release.Namespace }}
+      app.kubernetes.io/release: {{ .Release.Name }}
+      app.kubernetes.io/managed-by: helm
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+      labels:
+        app: {{ .Release.Name }}
+        app.kubernetes.io/name: {{ .Release.Name }}
+        app.kubernetes.io/component: fabric
+        app.kubernetes.io/part-of: {{ template "fabric-peernode.fullname" . }}
+        app.kubernetes.io/namespace: {{ .Release.Namespace }}
+        app.kubernetes.io/release: {{ .Release.Name }}
+        app.kubernetes.io/managed-by: helm
+        {{- include "labels.deployment" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ .Values.global.serviceAccountName }}
+      automountServiceAccountToken: {{ .Values.automountServiceAccountToken }}
+      {{- if .Values.podSecurityContext.enabled }}
+      securityContext:
+        runAsNonRoot: {{ .Values.podSecurityContext.runAsNonRoot }}
+        runAsUser: {{ .Values.podSecurityContext.runAsUser }}
+        runAsGroup: {{ .Values.podSecurityContext.runAsGroup }}
+        fsGroup: {{ .Values.podSecurityContext.fsGroup }}
+        seccompProfile:
+{{ toYaml .Values.podSecurityContext.seccompProfile | indent 10 }}
+      {{- end }}
+      {{- if .Values.image.pullSecret }}
+      imagePullSecrets:
+        - name: {{ .Values.image.pullSecret }}
+      {{- end }}
+      {{- if not .Values.certs.useKubernetesSecrets }}
+      initContainers:
+      - name: certificates-init
+        image: {{ .Values.image.alpineUtils }}
+        imagePullPolicy: IfNotPresent
+        {{- if .Values.containerSecurityContext.enabled }}
+        securityContext:
+{{ omit .Values.containerSecurityContext "enabled" | toYaml | indent 10 }}
+        {{- end }}
+        resources:
+{{ toYaml .Values.sidecarResources.certificatesInit | indent 10 }}
+        env:
+        - name: VAULT_ADDR
+          value: {{ .Values.global.vault.address }}
+        - name: VAULT_SECRET_ENGINE
+          value: "{{ .Values.global.vault.secretEngine }}"
+        - name: VAULT_SECRET_PREFIX
+          value: "{{ .Values.global.vault.secretPrefix }}"
+        - name: KUBERNETES_AUTH_PATH
+          value: {{ .Values.global.vault.authPath }}
+        - name: VAULT_APP_ROLE
+          value: {{ .Values.global.vault.role }}
+        - name: MOUNT_PATH
+          value: /secret
+        - name: VAULT_TYPE
+          value: "{{ .Values.global.vault.type }}"
+        - name: PEER_NAME
+          value: {{ .Release.Name }}
+        command: ["sh", "-c"]
+        args:
+        - |-
+          #!/usr/bin/env sh
+
+{{- if eq .Values.global.vault.type "hashicorp" }}
+          . /scripts/bevel-vault.sh
+
+          # Calling a function to retrieve the vault token.
+          vaultBevelFunc "init"
+
+          function getPeerTlsSecret {
+            KEY=$1-tls
+
+            echo "Getting TLS certificates from Vault."
+            vaultBevelFunc "readJson" "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/peers/${KEY}"
+            if [ "$SECRETS_AVAILABLE" == "yes" ]
+            then
+              TLS_CA_CERT=$(echo ${VAULT_SECRET} | jq -r '.["ca_crt"]')
+              TLS_SERVER_CERT=$(echo ${VAULT_SECRET} | jq -r '.["server_crt"]')
+              TLS_SERVER_KEY=$(echo ${VAULT_SECRET} | jq -r '.["server_key"]')
+
+              echo "${TLS_CA_CERT}" > ${OUTPUT_PATH}/ca.crt
+              echo "${TLS_SERVER_CERT}" > ${OUTPUT_PATH}/server.crt
+              echo "${TLS_SERVER_KEY}" > ${OUTPUT_PATH}/server.key
+              PEER_TLS_SECRET=true
+            else
+              PEER_TLS_SECRET=false
+            fi
+          }
+
+          function getPeerMspSecret {
+            KEY=$1-msp
+
+            echo "Getting MSP certificates from Vault."
+            vaultBevelFunc "readJson" "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/peers/${KEY}"
+            if [ "$SECRETS_AVAILABLE" == "yes" ]
+            then
+              ADMINCERT=$(echo ${VAULT_SECRET} | jq -r '.["admincerts"]')
+              CACERTS=$(echo ${VAULT_SECRET} | jq -r '.["cacerts"]')
+              KEYSTORE=$(echo ${VAULT_SECRET} | jq -r '.["keystore"]')
+              SIGNCERTS=$(echo ${VAULT_SECRET} | jq -r '.["signcerts"]')
+              TLSCACERTS=$(echo ${VAULT_SECRET} | jq -r '.["tlscacerts"]')
+
+              echo "${ADMINCERT}" > ${OUTPUT_PATH}/admincerts/admin.crt
+              echo "${CACERTS}" > ${OUTPUT_PATH}/cacerts/ca.crt
+              echo "${KEYSTORE}" > ${OUTPUT_PATH}/keystore/server.key
+              echo "${SIGNCERTS}" > ${OUTPUT_PATH}/signcerts/server.crt
+              echo "${TLSCACERTS}" > ${OUTPUT_PATH}/tlscacerts/tlsca.crt
+              PEER_MSP_SECRET=true
+            else
+              PEER_MSP_SECRET=false
+            fi
+          }
+
+{{- else }}
+          function getPeerTlsSecret {
+            KEY=$1-tls
+            KUBENETES_SECRET=$(kubectl get secret ${KEY} --namespace {{ .Release.Namespace }} -o json)
+            if  [ "$KUBENETES_SECRET" = "" ]; then
+              PEER_TLS_SECRET=false
+            else
+              TLS_CA_CERT=$(echo ${KUBENETES_SECRET} | jq -r '.data.cacrt'  | base64 -d)
+              TLS_SERVER_CERT=$(echo ${KUBENETES_SECRET} | jq -r '.data.servercrt'  | base64 -d)
+              TLS_SERVER_KEY=$(echo ${KUBENETES_SECRET} | jq -r '.data.serverkey'  | base64 -d)
+
+              echo "${TLS_CA_CERT}" > ${OUTPUT_PATH}/ca.crt
+              echo "${TLS_SERVER_CERT}" > ${OUTPUT_PATH}/server.crt
+              echo "${TLS_SERVER_KEY}" > ${OUTPUT_PATH}/server.key
+              PEER_TLS_SECRET=true
+            fi
+          }
+
+          function getPeerMspSecret {
+            KEY=$1-msp
+            KUBENETES_SECRET=$(kubectl get secret ${KEY} --namespace {{ .Release.Namespace }} -o json)
+            if  [ "$KUBENETES_SECRET" = "" ]; then
+              PEER_MSP_SECRET=false
+            else
+              ADMINCERT=$(echo ${KUBENETES_SECRET} | jq -r '.data.admincerts'  | base64 -d)
+              CACERTS=$(echo ${KUBENETES_SECRET} | jq -r '.data.cacerts'  | base64 -d)
+              KEYSTORE=$(echo ${KUBENETES_SECRET} | jq -r '.data.keystore'  | base64 -d)
+              SIGNCERTS=$(echo ${KUBENETES_SECRET} | jq -r '.data.signcerts'  | base64 -d)
+              TLSCACERTS=$(echo ${KUBENETES_SECRET} | jq -r '.data.tlscacerts'  | base64 -d)
+
+              echo "${ADMINCERT}" > ${OUTPUT_PATH}/admincerts/admin.crt
+              echo "${CACERTS}" > ${OUTPUT_PATH}/cacerts/ca.crt
+              echo "${KEYSTORE}" > ${OUTPUT_PATH}/keystore/server.key
+              echo "${SIGNCERTS}" > ${OUTPUT_PATH}/signcerts/server.crt
+              echo "${TLSCACERTS}" > ${OUTPUT_PATH}/tlscacerts/tlsca.crt
+              PEER_MSP_SECRET=true
+            fi
+
+          }
+{{- end }}
+
+          COUNTER=1
+          while [ "$COUNTER" -le {{ .Values.peer.healthCheck.retries }} ]
+          do
+            OUTPUT_PATH="${MOUNT_PATH}/tls"
+            mkdir -p ${OUTPUT_PATH}
+            getPeerTlsSecret ${PEER_NAME}
+
+            OUTPUT_PATH="${MOUNT_PATH}/msp"
+            mkdir -p ${OUTPUT_PATH}/admincerts
+            mkdir -p ${OUTPUT_PATH}/cacerts
+            mkdir -p ${OUTPUT_PATH}/keystore
+            mkdir -p ${OUTPUT_PATH}/signcerts
+            mkdir -p ${OUTPUT_PATH}/tlscacerts
+            getPeerMspSecret ${PEER_NAME}
+
+            if [ "$PEER_TLS_SECRET" = "true" ] && [ "$PEER_MSP_SECRET" = "true" ]
+            then
+              echo "Peer certificates have been obtained correctly"
+              break
+            else
+              echo "Peer certificates have not been obtained, sleeping for {{ .Values.peer.healthCheck.sleepTimeAfterError }}"
+              sleep {{ .Values.peer.healthCheck.sleepTimeAfterError }}
+              COUNTER=`expr "$COUNTER" + 1`
+            fi
+          done
+
+          if [ "$COUNTER" -gt {{ .Values.peer.healthCheck.retries }} ]
+          then
+            echo "Retry attempted `expr $COUNTER - 1` times, The peer certificates have not been obtained."
+            exit 1
+          fi
+
+        volumeMounts:
+        {{ if .Values.global.vault.tls  }}
+        - name: vaultca
+          mountPath: "/etc/ssl/certs/"
+          readOnly: true
+        {{ end }}
+        - name: certificates
+          mountPath: /secret
+        - name: scripts-volume
+          mountPath: /scripts/bevel-vault.sh
+          subPath: bevel-vault.sh
+      {{- end }}
+      containers:
+      - name: couchdb
+        {{- if contains "@" .Values.image.couchdb }}
+        image: {{ .Values.image.couchdb }}
+        {{- else }}
+        image: {{ .Values.image.couchdb }}:{{ .Values.global.version }}
+        {{- end }}
+        imagePullPolicy: IfNotPresent
+        {{- if .Values.containerSecurityContext.enabled }}
+        securityContext:
+{{ omit .Values.containerSecurityContext "enabled" | toYaml | indent 10 }}
+        {{- end }}
+        resources:
+{{ toYaml .Values.sidecarResources.couchdb | indent 10 }}
+        command: ["sh", "-c"]
+        args:
+        - |-
+          {{- if .Values.peer.couchdb.manageFilePermissions }}
+          chown -R couchdb:couchdb /opt/couchdb
+          chmod -R 0770 /opt/couchdb/data
+          chmod 664 /opt/couchdb/etc/*.ini
+          chmod 664 /opt/couchdb/etc/local.d/*.ini
+          chmod 775 /opt/couchdb/etc/*.d
+          {{- end }}
+          if [ -z $COUCHDB_USER ]
+          then
+            echo " Error! Please provide username for CouchDB."
+            exit 1
+            break
+          elif [ -z $COUCHDB_PASSWORD ]
+          then
+            echo " Error! Please provide password for username $COUCHDB_USER."
+            exit 1
+            break
+          fi
+          tini -- /docker-entrypoint.sh /opt/couchdb/bin/couchdb
+        ports:
+        - name: couchdb
+          containerPort: 5984
+        {{- if .Values.peer.couchdb.probes.enabled }}
+        startupProbe:
+          tcpSocket:
+            port: couchdb
+          periodSeconds: {{ .Values.peer.couchdb.probes.startup.periodSeconds }}
+          failureThreshold: {{ .Values.peer.couchdb.probes.startup.failureThreshold }}
+        readinessProbe:
+          tcpSocket:
+            port: couchdb
+          periodSeconds: {{ .Values.peer.couchdb.probes.readiness.periodSeconds }}
+          failureThreshold: {{ .Values.peer.couchdb.probes.readiness.failureThreshold }}
+        livenessProbe:
+          tcpSocket:
+            port: couchdb
+          periodSeconds: {{ .Values.peer.couchdb.probes.liveness.periodSeconds }}
+          failureThreshold: {{ .Values.peer.couchdb.probes.liveness.failureThreshold }}
+        {{- end }}
+        env:
+        - name: COUCHDB_USER
+          {{- if .Values.peer.couchdb.existingSecret }}
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.peer.couchdb.existingSecret }}
+              key: {{ .Values.peer.couchdb.usernameKey }}
+          {{- else }}
+          value: "{{ .Values.peer.couchdb.username }}"
+          {{- end }}
+        - name: COUCHDB_PASSWORD
+          {{- if .Values.peer.couchdb.existingSecret }}
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.peer.couchdb.existingSecret }}
+              key: {{ .Values.peer.couchdb.passwordKey }}
+          {{- else }}
+          value: "{{ .Values.peer.couchdb.password }}"
+          {{- end }}
+        volumeMounts:
+        - name: datadir-couchdb
+          mountPath: /opt/couchdb/data
+        - name: certificates
+          mountPath: /etc/hyperledger/fabric/crypto
+      - name: {{ .Release.Name }}
+        {{- if contains "@" .Values.image.peer }}
+        image: {{ .Values.image.peer }}
+        {{- else }}
+        image: {{ .Values.image.peer }}:{{ .Values.global.version }}
+        {{- end }}
+        imagePullPolicy: IfNotPresent
+        {{- if .Values.containerSecurityContext.enabled }}
+        securityContext:
+{{ omit .Values.containerSecurityContext "enabled" | toYaml | indent 10 }}
+        {{- end }}
+        command: ["sh", "-c"]
+        args:
+        - |-
+          {{- if not .Values.certs.useKubernetesSecrets }}
+          cp /etc/hyperledger/fabric/NodeOUconfig/mspConfig  /etc/hyperledger/fabric/crypto/msp/config.yaml
+          {{- end }}
+          {{- if not .Values.peer.couchdb.existingSecret }}
+          export CORE_LEDGER_STATE_COUCHDBCONFIG_PASSWORD="{{ .Values.peer.couchdb.password }}"
+          {{- end }}
+          version=$( echo ${PEER_IMAGE} | sed 's/.*://' | cut -d '.' -f -2 )
+          if [ $version = "2.2" ] && [ ${IS_UPGRADE} = "true" ]
+          then
+            peer node upgrade-dbs
+          fi
+          peer node start
+        ports:
+        - name: grpc
+          containerPort: 7051
+        - name: events
+          containerPort: 7053
+        - name: operations
+          containerPort: 9443
+        {{- if .Values.peer.probes.enabled }}
+        startupProbe:
+          httpGet:
+            path: /healthz
+            port: operations
+            scheme: {{ ternary "HTTPS" "HTTP" .Values.peer.operationsTLS }}
+          periodSeconds: {{ .Values.peer.probes.startup.periodSeconds }}
+          failureThreshold: {{ .Values.peer.probes.startup.failureThreshold }}
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: operations
+            scheme: {{ ternary "HTTPS" "HTTP" .Values.peer.operationsTLS }}
+          periodSeconds: {{ .Values.peer.probes.readiness.periodSeconds }}
+          failureThreshold: {{ .Values.peer.probes.readiness.failureThreshold }}
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: operations
+            scheme: {{ ternary "HTTPS" "HTTP" .Values.peer.operationsTLS }}
+          periodSeconds: {{ .Values.peer.probes.liveness.periodSeconds }}
+          failureThreshold: {{ .Values.peer.probes.liveness.failureThreshold }}
+        {{- end }}
+        env:
+        - name: PEER_IMAGE
+          {{- if contains "@" .Values.image.peer }}
+          value: "{{ .Values.image.peer }}"
+          {{- else }}
+          value: "{{ .Values.image.peer }}:{{ .Values.global.version }}"
+          {{- end }}
+        - name: IS_UPGRADE
+          value: "{{ .Values.peer.upgrade }}"
+        {{- if .Values.peer.couchdb.existingSecret }}
+        - name: CORE_LEDGER_STATE_COUCHDBCONFIG_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.peer.couchdb.existingSecret }}
+              key: {{ .Values.peer.couchdb.usernameKey }}
+        - name: CORE_LEDGER_STATE_COUCHDBCONFIG_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.peer.couchdb.existingSecret }}
+              key: {{ .Values.peer.couchdb.passwordKey }}
+        {{- end }}
+        envFrom:
+        - configMapRef:
+            name: {{ .Release.Name }}-config
+        volumeMounts:
+        - name: datadir
+          mountPath: /var/hyperledger/production
+        {{- if .Values.peer.dockerSocket.enabled }}
+        - name: dockersocket
+          mountPath: /host/var/run/docker.sock
+        {{- end }}
+        - name: certificates
+          mountPath: /etc/hyperledger/fabric/crypto
+        {{- if not .Values.certs.useKubernetesSecrets }}
+        - name: {{ .Release.Name }}-msp-config-volume
+          mountPath: /etc/hyperledger/fabric/NodeOUconfig
+          readOnly: true
+        {{- end }}
+        - name: builders-config
+          mountPath: /var/hyperledger/fabric/config/core.yaml
+          subPath: core.yaml
+          readOnly: true
+        resources:
+          requests:
+            memory: {{ .Values.peer.resources.requests.memory }}
+            cpu: {{ .Values.peer.resources.requests.cpu }}
+          limits:
+            memory: {{ .Values.peer.resources.limits.memory }}
+            cpu: {{ .Values.peer.resources.limits.cpu }}
+      {{- if .Values.grpcWeb.enabled }}
+      - name: grpc-web
+        image: "ghcr.io/hyperledger-labs/grpc-web:latest"
+        imagePullPolicy: IfNotPresent
+        {{- if .Values.containerSecurityContext.enabled }}
+        securityContext:
+{{ omit .Values.containerSecurityContext "enabled" | toYaml | indent 10 }}
+        {{- end }}
+        resources:
+{{ toYaml .Values.sidecarResources.grpcWeb | indent 10 }}
+        ports:
+        - name: grpc-web
+          containerPort: 7443
+        env:
+        - name: BACKEND_ADDRESS
+          value: "{{ .Release.Name }}.{{ .Release.Namespace }}:{{ .Values.peer.ports.grpc.clusterIpPort }}"
+        - name: SERVER_TLS_CERT_FILE
+          value: /certs/tls/server.crt
+        - name: SERVER_TLS_KEY_FILE
+          value: /certs/tls/server.key
+        - name: BACKEND_TLS_CA_FILES
+          value: /certs/tls/ca.crt
+        - name: SERVER_BIND_ADDRESS
+          value: "0.0.0.0"
+        - name: SERVER_HTTP_DEBUG_PORT
+          value: "8080"
+        - name: SERVER_HTTP_TLS_PORT
+          value: "7443"
+        - name: BACKEND_TLS
+          value: "true"
+        - name: SERVER_HTTP_MAX_WRITE_TIMEOUT
+          value: 5m
+        - name: SERVER_HTTP_MAX_READ_TIMEOUT
+          value: 5m
+        - name: USE_WEBSOCKETS
+          value: "true"
+        volumeMounts:
+        - name: certificates
+          mountPath: /certs
+      {{- end }}
+      volumes:
+      {{ if .Values.global.vault.tls  }}
+      - name: vaultca
+        secret:
+          secretName: {{ .Values.global.vault.tls }}
+          items:
+          - key: ca.crt.pem
+            path: ca-certificates.crt
+      {{ end }}
+      - name: builders-config
+        configMap:
+          name: {{ .Release.Name }}-builders-config
+      - name: certificates
+        {{- if .Values.certs.useKubernetesSecrets }}
+        projected:
+          defaultMode: 0440
+          sources:
+          - secret:
+              name: {{ .Release.Name }}-msp
+              items:
+              - key: admincerts
+                path: msp/admincerts/admin.crt
+              - key: cacerts
+                path: msp/cacerts/ca.crt
+              - key: keystore
+                path: msp/keystore/server.key
+              - key: signcerts
+                path: msp/signcerts/server.crt
+              - key: tlscacerts
+                path: msp/tlscacerts/tlsca.crt
+          - secret:
+              name: {{ .Release.Name }}-tls
+              items:
+              - key: cacrt
+                path: tls/ca.crt
+              - key: servercrt
+                path: tls/server.crt
+              - key: serverkey
+                path: tls/server.key
+          - configMap:
+              name: {{ .Release.Name }}-msp-config
+              items:
+              - key: mspConfig
+                path: msp/config.yaml
+        {{- else }}
+        emptyDir:
+          medium: Memory
+        {{- end }}
+      {{- if .Values.storage.peerExistingClaim }}
+      - name: datadir
+        persistentVolumeClaim:
+          claimName: {{ .Values.storage.peerExistingClaim }}
+      {{- end }}
+      {{- if .Values.storage.couchdbExistingClaim }}
+      - name: datadir-couchdb
+        persistentVolumeClaim:
+          claimName: {{ .Values.storage.couchdbExistingClaim }}
+      {{- end }}
+      {{- if .Values.peer.dockerSocket.enabled }}
+      - name: dockersocket
+        hostPath:
+          path: /var/run/docker.sock
+      {{- end }}
+      {{- if not .Values.certs.useKubernetesSecrets }}
+      - name: {{ .Release.Name }}-msp-config-volume
+        configMap:
+          name: {{ .Release.Name }}-msp-config
+          items:
+            - key: mspConfig
+              path: mspConfig
+      {{- end }}
+      {{- if not .Values.certs.useKubernetesSecrets }}
+      - name: scripts-volume
+        configMap:
+          name: bevel-vault-script
+      {{- end }}
+  {{- if or (not .Values.storage.peerExistingClaim) (not .Values.storage.couchdbExistingClaim) }}
+  volumeClaimTemplates:
+  #Lables are not being taken by Kubernetes as it dynamically creates PVC
+  {{- if not .Values.storage.peerExistingClaim }}
+  - metadata:
+      name: datadir
+      labels:
+        {{- include "labels.pvc" . | nindent 8 }}
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: storage-{{ .Release.Name }}
+      resources:
+        requests:
+          storage: {{ .Values.storage.peer }}
+  {{- end }}
+  {{- if not .Values.storage.couchdbExistingClaim }}
+  - metadata:
+      name: datadir-couchdb
+      labels:
+        {{- include "labels.pvc" . | nindent 8 }}
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: storage-{{ .Release.Name }}
+      resources:
+        requests:
+          storage: {{ .Values.storage.couchdb }}
+  {{- end }}
+  {{- end }}
+# Modified by Fabric Network Tool for namespace-scoped, restricted Fabric deployment.

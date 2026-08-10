@@ -1,0 +1,29 @@
+# Generated deployment plans, manifests, receipts, and local resume state
+build/
+**/build/
+
+# Local configuration overrides
+examples/*.local.yaml
+*.local.yaml
+.env
+.env.*
+!.env.example
+
+# Credentials and cryptographic material must never be committed
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+*.token
+kubeconfig
+kubeconfig.*
+credentials
+credentials.*
+
+# Tooling and operating-system files
+*.log
+.DS_Store
+.idea/
+.vscode/
+coverage/

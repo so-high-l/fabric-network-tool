@@ -1,0 +1,105 @@
+apiVersion: fabric.network.tools/v1alpha1
+kind: FabricNetwork
+metadata:
+  # REQUIRED: lowercase deployment/network identifier.
+  name: replace-me
+spec:
+  # REQUIRED: development, staging, or production.
+  environment: production
+
+  cluster:
+    # REQUIRED: exact name shown by `kubectl config get-contexts`.
+    context: replace-with-production-context
+    # REQUIRED: namespace already assigned by the platform team.
+    namespace: replace-with-namespace
+    # OPTIONAL: use this when testing the exact namespace service-account RBAC.
+    serviceAccount: replace-with-service-account
+    impersonateServiceAccount: true
+
+  network:
+    # REQUIRED: logical DNS domain owned by this Fabric network.
+    domain: fabric.example.com
+
+  fabric:
+    # v1alpha1 currently supports participation-mode Fabric 2.5.x.
+    version: 2.5.4
+
+  topology:
+    # REQUIRED: production Raft count must be odd and at least 3.
+    orderers: 3
+    # REQUIRED: number of application organizations.
+    peerOrganizations: 4
+    # REQUIRED: number of peers in every generated organization.
+    peersPerOrganization: 1
+
+  channel:
+    # REQUIRED: the initial application channel joined by every generated peer.
+    name: channel1
+
+  chaincode:
+    # REQUIRED: initial external-service chaincode definition.
+    name: supplychain
+    version: "1"
+    sequence: 1
+    initRequired: false
+    tls: true
+
+  dns:
+    # REQUIRED: usually cluster.local; confirm with the cluster team.
+    clusterDomain: cluster.local
+    external:
+      # Enable only when orderers/peers have real externally resolvable names.
+      enabled: false
+      # domain: fabric.example.com
+
+  storage:
+    # Production v1alpha1 expects the platform team to pre-provision matching PVs.
+    mode: existingClaims
+    # Defaults are ca-<org>, orderer<N>, peer<N>-org<M>, couchdb-peer<N>-org<M>.
+    # Add claimTemplates only when an existing cluster uses different PVC names.
+
+  secrets:
+    # kubernetes, vault, or external. Never place credential values in this file.
+    provider: external
+    enrollment: fabric-ca
+    # Production never generates or rotates CA roots/bootstrap credentials.
+    caBootstrapMode: existing
+
+  identities:
+    # Provision this Secret out of band with one key per generated orderer and
+    # peer. fabricctl never embeds registration passwords in this file.
+    registrationSecret: fabric-ca-enrollment-secrets
+    registrationSecretMode: existing
+    # v1alpha1 never replaces a complete, valid identity Secret pair.
+    renewalPolicy: preserve
+
+  databases:
+    # Provision <peer-name>-couchdb Secrets with username/password keys.
+    couchdbCredentialsMode: existing
+
+  images:
+    # REQUIRED: use the image digest tested by your release process.
+    fabricCA: hyperledger/fabric-ca:1.5.15@sha256:1b64dc702bd400e14c8f452dedc0359b7dc06679b751b08937eb2bf2865fed40
+    fabricOrderer: hyperledger/fabric-orderer:2.5.4@sha256:1a7144705b435062f4be2886de98d0408165cf51326ec721c3f58b40bf8bf139
+    fabricPeer: hyperledger/fabric-peer:2.5.4@sha256:c2e735a3cb8250c47ed3589294b3f0c078004ec001b949710f334736651e106d
+    couchDB: couchdb:3.3.2@sha256:413645f2a2847264be532d7aa200637e1aa5d37b414996fe69c98a9e521724f8
+    fabricTools: hyperledger/fabric-tools:2.5.4@sha256:b3aea8173802186244663334b4196c415cb267d77ea8c617fdd30652c5a732c4
+    # Match the cluster minor version and pin the multi-architecture index.
+    kubectl: registry.k8s.io/kubectl:v1.35.0@sha256:0bb95b2a450875fc8ceaea2f9987a99fe27c228846e2e00b93b65ebb0d59034e
+    # REQUIRED: immutable external chaincode server image.
+    chaincode: ghcr.io/example/supplychain-ccaas:1.0.0@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    # Optional for public images; required when the registry needs credentials.
+    pullSecret: replace-with-pull-secret
+
+  security:
+    # Mandatory in production.
+    operationsTLS: true
+    fabricCaDebug: false
+
+  logging:
+    orderer: info
+    peer: info
+
+  execution:
+    # Relative to the directory where fabricctl is executed.
+    outputDirectory: ./build/replace-me
