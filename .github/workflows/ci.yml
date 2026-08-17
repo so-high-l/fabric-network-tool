@@ -44,10 +44,10 @@ jobs:
           install -m 0755 "$RUNNER_TEMP/helm/linux-amd64/helm" "$RUNNER_TEMP/bin/helm"
           printf '%s\n' "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
-      - name: Install shellcheck
+      - name: Install shellcheck and ripgrep
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends shellcheck
+          sudo apt-get install --yes --no-install-recommends shellcheck ripgrep
 
       - name: Run security and regression checks
         run: ./tests/security-check.sh
