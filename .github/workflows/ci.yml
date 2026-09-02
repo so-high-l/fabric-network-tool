@@ -47,7 +47,7 @@ jobs:
       - name: Install shellcheck
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends shellcheck
+          sudo apt-get install --yes --no-install-recommends shellcheck ripgrep
 
       - name: Run security and regression checks
         run: ./tests/security-check.sh
